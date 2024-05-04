@@ -1,32 +1,46 @@
 #!/usr/bin/env python3
 
-import imageio, os, requests, yaml
+import io, os, requests, yaml
+import imageio.v2 as iio2
+import imageio.v3 as iio3
 from tkinter import Tk, ttk
 
+class TelegramBot:
+    def __init__(self, bot_token: str, chat_id: str) -> None:
+        self.bot_token = bot_token
+        self.chat_id = chat_id
+        
+    def shot_photo_send(self) -> None:
+        frame = iio2.get_reader('<video0>').get_next_data()
+        buffer = io.BytesIO()
+        iio3.imwrite(buffer, frame, plugin='pillow', extension=".png") # type: ignore
+        buffer.seek(0)
+        requests.post(
+            f'https://api.telegram.org/bot{self.bot_token}/sendPhoto',
+            data={'chat_id': self.chat_id},
+            files={'photo': ('image.png', buffer, 'image/png')}
+        )
+
+    @classmethod
+    def get_chat_id(cls, token: str) -> str:
+        res = requests.post(f'https://api.telegram.org/bot{token}/getUpdates').json()
+        return res['result'][0]['message']['chat']['id']
+
+
 class App(Tk):
-    def __init__(self, bot_token: str, chat_id: str | None, password: str):
+    def __init__(self, bot: TelegramBot, password: str) -> None:
         super().__init__()
 
+        self.bot = bot
         self.password = password
-
-        # Bot
-
-        self.bot_token = bot_token
-
-        if chat_id == None:
-            self.chat_id = self.get_chat_id(bot_token)
-        else:
-            self.chat_id = chat_id
-
-        # GUI
 
         self.title('Protect by PashaCoder')
         self.geometry('555x555')
         self.resizable(False, False)
         self.protocol("WM_DELETE_WINDOW", self.on_leave)
-        self.bind('<Control_L>', self.on_leave)
-        self.bind('<Alt_L>', self.on_leave)
-        self.bind('<Return>', self.on_leave)
+
+        for key in ['<Control_L>', '<Alt_L>', '<Return>']:
+            self.bind(key, self.on_leave)
 
         self.frame = ttk.Frame(self)
         self.frame.bind('<Leave>', self.on_leave)
@@ -40,43 +54,24 @@ class App(Tk):
         if self.entry.get() == self.password:
             self.destroy()
         else:
-            self.shot_photo_send()
+            self.bot.shot_photo_send()
             os.system("systemctl suspend")
-
-    def shoot_photo_send(self) -> None:
-        reader = imageio.get_reader('<video0>')
-        frame = reader.get_next_data()
-        imageio.imwrite('protect_photo.png', list(frame))
-        reader.close()
-        with open('protect_photo.png', 'rb') as file:
-            print(file)
-            r = requests.post(f'https://api.telegram.org/bot{self.bot_token}/sendPhoto',
-                            data={'chat_id': self.chat_id},
-                            files={"photo": file})
-        os.remove('protect_photo.png')
-
-    @classmethod
-    def get_chat_id(cls, token: str) -> str:
-        url = f'https://api.telegram.org/bot{token}/getUpdates' 
-        res = requests.post(url).json()
-        return res['result'][0]['message']['chat']['id']
 
 
 def get_config() -> dict[str, str]:
     try:
-        with open('config.yaml', 'r') as file: 
-            config = yaml.safe_load(file)
+        config = yaml.safe_load(open('config.yaml', 'r'))
     except FileNotFoundError:
         print('Not exist config.yml file, creating...')
         config = dict(bot_token=input('Bot token: '))
-        config['chat_id'] = App.get_chat_id(config['bot_token'])
-        config['password'] = input('set password: ')
-        with open('config.yaml', 'w') as file:
-            yaml.dump(config, file)
+        config['chat_id'] = TelegramBot.get_chat_id(config['bot_token'])
+        config['password'] = input('set password:' )
+        yaml.dump(config, open('config.yaml', 'w'))
     return config
 
 
 if __name__ == "__main__":
     config = get_config()
-    app = App(config['bot_token'], config['chat_id'], config['password'])
+    bot = TelegramBot(config['bot_token'], config['chat_id'])
+    app = App(bot, config['password'])
     app.mainloop()
